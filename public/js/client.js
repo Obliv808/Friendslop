@@ -1,4 +1,9 @@
 import * as THREE from "three";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import {
   ITEM_DEFS,
   NEED_META,
@@ -49,12 +54,20 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x070b14);
 scene.fog = new THREE.Fog(0x070b14, 14, 32);
 scene.add(starfield());
 const cabin = buildCabin(scene);
+
+// A cheap procedural "room" environment gives metal/glossy surfaces
+// (the cart, seat armrests, galley units) soft reflections instead of
+// looking flat, without needing any external HDRI asset.
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.08, 80);
 camera.position.set(0, 1.4, 19.5);
@@ -76,6 +89,36 @@ const nametags = new Map();
 const fireLight = new THREE.PointLight(0xff6b2a, 0, 8, 1.4);
 fireLight.position.set(0, 1.4, 19.2);
 scene.add(fireLight);
+
+// A single soft overhead key light casts real (cheap, one-light) shadows
+// so players, passengers, the cart, and dropped items feel grounded in
+// the cabin instead of floating.
+const keyLight = new THREE.DirectionalLight(0xfff1d8, 0.9);
+keyLight.position.set(1.4, 6, 11);
+keyLight.target.position.set(0, 0, 11);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(1536, 1536);
+keyLight.shadow.camera.near = 1;
+keyLight.shadow.camera.far = 20;
+keyLight.shadow.camera.left = -3;
+keyLight.shadow.camera.right = 3;
+keyLight.shadow.camera.top = 12;
+keyLight.shadow.camera.bottom = -12;
+keyLight.shadow.bias = -0.0025;
+keyLight.shadow.normalBias = 0.02;
+scene.add(keyLight, keyLight.target);
+
+// Postprocessing: MSAA-preserving composer + a light bloom pass so the
+// gold trim, aisle lighting, and cabin lamps actually glow.
+const composerTarget = new THREE.WebGLRenderTarget(innerWidth, innerHeight, {
+  samples: 4,
+  type: THREE.HalfFloatType,
+});
+const composer = new EffectComposer(renderer, composerTarget);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.42, 0.55, 0.82);
+composer.addPass(bloomPass);
+composer.addPass(new OutputPass());
 
 function proto() {
   const p = location.protocol === "https:" ? "wss" : "ws";
@@ -810,7 +853,7 @@ function loop(now) {
     }
   }
 
-  renderer.render(scene, camera);
+  composer.render();
 }
 requestAnimationFrame(loop);
 
@@ -818,4 +861,6 @@ window.addEventListener("resize", () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  bloomPass.setSize(innerWidth, innerHeight);
 });

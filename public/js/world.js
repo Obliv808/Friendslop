@@ -5,8 +5,8 @@ function box(scene, w, h, d, x, y, z, mat, rotY = 0) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
   m.position.set(x, y, z);
   m.rotation.y = rotY;
-  m.castShadow = false;
-  m.receiveShadow = false;
+  m.castShadow = true;
+  m.receiveShadow = true;
   scene.add(m);
   return m;
 }
@@ -18,7 +18,7 @@ function canvasTex(draw, size = 256) {
   draw(g, size);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.anisotropy = 4;
+  t.anisotropy = 8;
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
@@ -27,13 +27,27 @@ function makeMats() {
   const carpet = canvasTex((g, s) => {
     g.fillStyle = "#1b2430";
     g.fillRect(0, 0, s, s);
-    for (let i = 0; i < 900; i++) {
-      g.fillStyle = i % 3 ? "#243044" : "#151c28";
+    // fine diamond weave, subtler than pure noise so it doesn't shimmer
+    // under the aisle lights when the camera is moving.
+    g.strokeStyle = "rgba(36,48,68,0.55)";
+    g.lineWidth = 1;
+    for (let i = -s; i < s * 2; i += 10) {
+      g.beginPath();
+      g.moveTo(i, 0);
+      g.lineTo(i + s, s);
+      g.stroke();
+      g.beginPath();
+      g.moveTo(i, s);
+      g.lineTo(i + s, 0);
+      g.stroke();
+    }
+    for (let i = 0; i < 1400; i++) {
+      g.fillStyle = i % 3 ? "rgba(36,48,68,0.5)" : "rgba(21,28,40,0.6)";
       g.fillRect((Math.random() * s) | 0, (Math.random() * s) | 0, 2, 2);
     }
     g.fillStyle = "#c9a227";
-    g.fillRect(s * 0.48, 0, s * 0.04, s);
-  }, 256);
+    g.fillRect(s * 0.485, 0, s * 0.03, s);
+  }, 512);
   carpet.repeat.set(6, 22);
 
   const plastic = canvasTex((g, s) => {
@@ -132,6 +146,10 @@ export function buildCabin(scene) {
         new THREE.MeshStandardMaterial({ color: 0x330000, emissive: 0xff2244, emissiveIntensity: 0 })
       );
       light.position.set(0, 1.12, 0.18);
+      for (const m of [base, back, armL, armR]) {
+        m.castShadow = true;
+        m.receiveShadow = true;
+      }
       group.add(base, back, armL, armR, light);
       scene.add(group);
       seats.push({ row, seat: s, group, light, lightMat: light.material });
@@ -198,6 +216,10 @@ export function makeCartMesh() {
     new THREE.MeshStandardMaterial({ color: 0x1f6f6a })
   );
   stripe.position.y = 0.9;
+  for (const m of [body, handle, stripe]) {
+    m.castShadow = true;
+    m.receiveShadow = true;
+  }
   g.add(body, handle, stripe);
   return g;
 }
@@ -234,6 +256,8 @@ export function makeItemMesh(type) {
     default:
       mesh = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 0.16), mat);
   }
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
   g.add(mesh);
   return g;
 }
@@ -254,6 +278,10 @@ export function makePlayerMesh(colorIndex, isLocal) {
   brim.position.y = 1.32;
   const tie = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.18, 0.02), new THREE.MeshStandardMaterial({ color: 0xc9a227 }));
   tie.position.set(0, 0.95, 0.16);
+  for (const m of [body, head, hat, brim, tie]) {
+    m.castShadow = true;
+    m.receiveShadow = true;
+  }
   g.add(body, head, hat, brim, tie);
   if (isLocal) {
     body.visible = false;
@@ -283,6 +311,10 @@ export function makePassengerMesh(shirt) {
     new THREE.MeshStandardMaterial({ color: shirt })
   );
   arm.position.set(0.16, 0.85, 0);
+  for (const m of [body, head, arm]) {
+    m.castShadow = true;
+    m.receiveShadow = true;
+  }
   g.add(body, head, arm);
   g.userData.arm = arm;
   g.userData.body = body;
