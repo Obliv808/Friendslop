@@ -68,6 +68,14 @@
                 <option value="long">Redeye from hell — 6.5 min</option>
               </select>
             </label>
+            <label class="field grow">
+              <span>Difficulty</span>
+              <select id="diffSel">
+                <option value="calm">Calm hop</option>
+                <option value="standard" selected>Standard red-eye</option>
+                <option value="chaos">Chaos from hell</option>
+              </select>
+            </label>
           </div>
           <div class="row">
             <button id="readyBtn" class="btn">Ready</button>
@@ -106,6 +114,25 @@
           <input id="chatIn" maxlength="80" placeholder="Say it on the jumpseat…" autocomplete="off" />
         </form>
         <div class="crosshair"></div>
+
+        <div id="touchControls" class="touch-controls" hidden>
+          <div id="lookZone" class="look-zone"></div>
+          <div id="joyZone" class="joy-zone"><div id="joyStick" class="joy-stick"></div></div>
+          <div class="touch-actions">
+            <button class="tbtn tbtn-small" id="tChat" type="button" aria-label="Chat">💬</button>
+            <button class="tbtn tbtn-run" id="tRun" type="button">RUN</button>
+            <div class="tbtn-row">
+              <button class="tbtn tbtn-small" data-act="6" type="button">C</button>
+              <button class="tbtn" data-act="4" type="button">R</button>
+              <button class="tbtn" data-act="3" type="button">G</button>
+            </div>
+            <div class="tbtn-row">
+              <button class="tbtn tbtn-small" data-act="5" type="button">X</button>
+              <button class="tbtn" data-act="2" type="button">F</button>
+              <button class="tbtn tbtn-primary" data-act="1" type="button">E</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 

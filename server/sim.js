@@ -8,6 +8,7 @@ import {
   STATIONS,
   CART_DOCK,
   FLIGHT_SECONDS,
+  DIFFICULTY,
   PAX_FIRST,
   PAX_SHIRTS,
   PLAYER_COLORS,
@@ -46,9 +47,10 @@ function uid(prefix) {
 }
 
 export class Room {
-  constructor(code, durationKey = "regular") {
+  constructor(code, durationKey = "regular", difficultyKey = "standard") {
     this.code = code;
     this.durationKey = FLIGHT_SECONDS[durationKey] ? durationKey : "regular";
+    this.difficultyKey = DIFFICULTY[difficultyKey] ? difficultyKey : "standard";
     this.players = new Map();
     this.hostId = null;
     this.phase = "lobby";
@@ -126,6 +128,24 @@ export class Room {
     return 0;
   }
 
+  markDisconnected(id) {
+    const p = this.players.get(id);
+    if (!p) return;
+    p.connected = false;
+    p.ws = null;
+    // Freeze their input so they don't keep walking/holding a direction
+    // while nobody's driving.
+    p.lastIn = { bits: 0, yaw: p.yaw, pitch: p.pitch, a: 0 };
+  }
+
+  reconnect(id, ws) {
+    const p = this.players.get(id);
+    if (!p) return null;
+    p.connected = true;
+    p.ws = ws;
+    return p;
+  }
+
   removePlayer(id) {
     const p = this.players.get(id);
     if (!p) return;
@@ -156,6 +176,15 @@ export class Room {
   setDuration(id, key) {
     if (id !== this.hostId || this.phase !== "lobby") return;
     if (FLIGHT_SECONDS[key]) this.durationKey = key;
+  }
+
+  setDifficulty(id, key) {
+    if (id !== this.hostId || this.phase !== "lobby") return;
+    if (DIFFICULTY[key]) this.difficultyKey = key;
+  }
+
+  diff() {
+    return DIFFICULTY[this.difficultyKey] || DIFFICULTY.standard;
   }
 
   start(id) {
@@ -522,8 +551,9 @@ export class Room {
         this.events.push({ kind: "serve", seat: seatLabel(pax.row, pax.seat), type: held.type });
       }
     } else {
-      pax.mood = clamp(pax.mood - 10, 0, 100);
-      this.mood -= 3.2;
+      const moodMul = this.diff().moodMul;
+      pax.mood = clamp(pax.mood - 10 * moodMul, 0, 100);
+      this.mood -= 3.2 * moodMul;
       p.stats.wrong++;
       this.announce("warn", `${pax.name} in ${seatLabel(pax.row, pax.seat)} did NOT order a ${def.label.toLowerCase()}.`);
       this.spawnItem(held.type, p.x + 0.2, 0.4, p.z, null);
@@ -690,8 +720,9 @@ export class Room {
       for (const pax of this.passengers) {
         if (pax.state !== "seated") continue;
         if (Math.hypot(it.x - pax.x, it.z - pax.z) < 0.38 && it.y < 1.2 && Math.hypot(it.vx, it.vz, it.vy) > 2) {
-          pax.mood -= 8;
-          this.mood -= 2;
+          const moodMul = this.diff().moodMul;
+          pax.mood -= 8 * moodMul;
+          this.mood -= 2 * moodMul;
           it.vx *= -0.3;
           it.vz *= -0.3;
           this.events.push({ kind: "bonk", seat: seatLabel(pax.row, pax.seat) });
@@ -703,7 +734,7 @@ export class Room {
 
   spillAt(x, z, player) {
     this.spills.push({ x, z, t: 18 });
-    this.mood -= 1.5;
+    this.mood -= 1.5 * this.diff().moodMul;
     if (player) player.stats.spills++;
     this.events.push({ kind: "spill" });
   }
@@ -727,7 +758,7 @@ export class Room {
     const target = descent ? 2 : Math.min(2 + crew, 3 + ((this.flightLen - this.timeLeft) / 80) | 0);
 
     if (this.nextNeed <= 0 && this.phase === "flying") {
-      this.nextNeed = 3.2 + Math.random() * 2.4;
+      this.nextNeed = (3.2 + Math.random() * 2.4) * this.diff().needMul;
       if (active < target) {
         const idle = this.passengers.filter((p) => !p.need && p.state === "seated");
         if (idle.length) {
@@ -740,15 +771,16 @@ export class Room {
       }
     }
 
+    const moodMul = this.diff().moodMul;
     for (const pax of this.passengers) {
       if (!pax.need) continue;
       pax.needT -= dt;
-      if (NEED_META[pax.need]?.critical) this.mood -= 1.1 * dt;
+      if (NEED_META[pax.need]?.critical) this.mood -= 1.1 * dt * moodMul;
       if (pax.need === "baby") this.cry = Math.max(this.cry, 1);
       if (pax.needT <= 0) {
         pax.ignores++;
-        pax.mood = clamp(pax.mood - (NEED_META[pax.need]?.critical ? 18 : 9), 0, 100);
-        this.mood -= NEED_META[pax.need]?.critical ? 6 : 2.5;
+        pax.mood = clamp(pax.mood - (NEED_META[pax.need]?.critical ? 18 : 9) * moodMul, 0, 100);
+        this.mood -= (NEED_META[pax.need]?.critical ? 6 : 2.5) * moodMul;
         if (pax.need === "medical" && pax.ignores >= 2) {
           this.finish(false, `${pax.name} in ${seatLabel(pax.row, pax.seat)} went unresponsive. Flight diverted. HR would like a word.`);
           return;
@@ -789,7 +821,7 @@ export class Room {
     this.nextEvent -= dt;
     if (this.nextEvent > 0) return;
     const crew = Math.max(1, this.players.size);
-    this.nextEvent = Math.max(8, 16 - crew * 1.2) + Math.random() * 7;
+    this.nextEvent = (Math.max(8, 16 - crew * 1.2) + Math.random() * 7) * this.diff().eventMul;
     const elapsed = this.flightLen - this.timeLeft;
     const pool = ["pa", "turbulence", "baby", "drunk", "wifi"];
     if (elapsed > 40) pool.push("karen", "bin", "medical");
@@ -886,6 +918,7 @@ export class Room {
       phase: this.phase,
       hostId: this.hostId,
       durationKey: this.durationKey,
+      difficultyKey: this.difficultyKey,
       players: [...this.players.values()].map((p) => ({
         id: p.id,
         name: p.name,

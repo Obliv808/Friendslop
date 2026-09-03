@@ -5,6 +5,7 @@ import {
   PLAYER_COLORS,
   STATIONS,
   seatLabel,
+  TICK_MS,
 } from "./constants.js";
 import { encodeBits, lookDir } from "./physics.js";
 import { buildCabin, makeCartMesh, makeItemMesh, makePlayerMesh, makePassengerMesh, starfield } from "./world.js";
@@ -24,6 +25,8 @@ const labelsEl = document.getElementById("labels");
 nameIn.value = localStorage.getItem("redeye-name") || "";
 
 const audio = createAudio();
+const isTouch = matchMedia("(pointer: coarse)").matches;
+const touchControls = document.getElementById("touchControls");
 const keys = { f: false, b: false, l: false, r: false, run: false, jump: false };
 let yaw = Math.PI;
 let pitch = 0;
@@ -84,12 +87,65 @@ function showErr(m) {
   errEl.textContent = m || "";
 }
 
+// --- Session / reconnect -------------------------------------------------
+// A wifi blip or a laptop going to sleep shouldn't end someone's flight.
+// We remember who we were and try to slot back in when the socket drops.
+function saveSession() {
+  try {
+    sessionStorage.setItem("redeye-session", JSON.stringify({ id: myId, code: roomCode }));
+  } catch {}
+}
+function loadSession() {
+  try {
+    return JSON.parse(sessionStorage.getItem("redeye-session") || "null");
+  } catch {
+    return null;
+  }
+}
+function clearSession() {
+  try {
+    sessionStorage.removeItem("redeye-session");
+  } catch {}
+}
+function resetToMenu() {
+  phase = "menu";
+  preview = true;
+  document.exitPointerLock();
+  hud.hidden = true;
+  endPanel.hidden = true;
+  lobby.hidden = true;
+  menu.hidden = false;
+  overlay.style.display = "";
+}
+
+let reconnecting = false;
+let reconnectAttempts = 0;
+let awaitingRejoin = false;
+
 function connect() {
   if (ws && ws.readyState <= 1) return ws;
   ws = new WebSocket(proto());
   ws.onmessage = (ev) => onMsg(JSON.parse(ev.data));
+  ws.onopen = () => {
+    if (!reconnecting) return;
+    reconnecting = false;
+    const session = loadSession();
+    if (session?.id && session?.code) {
+      awaitingRejoin = true;
+      send({ t: "rejoin", id: session.id, code: session.code });
+    }
+  };
   ws.onclose = () => {
-    if (phase === "fly") showErr("Lost the jumpseat connection.");
+    if (phase === "menu") return; // never actually joined a flight
+    const session = loadSession();
+    if (session?.id && session?.code && reconnectAttempts < 6) {
+      reconnecting = true;
+      reconnectAttempts++;
+      showErr(`Lost the jumpseat connection — reconnecting… (${reconnectAttempts}/6)`);
+      setTimeout(() => connect(), 1200);
+    } else {
+      showErr("Lost the jumpseat connection.");
+    }
   };
   return ws;
 }
@@ -109,7 +165,7 @@ document.getElementById("createBtn").onclick = () => {
   localStorage.setItem("redeye-name", name);
   audio.resume();
   showErr("");
-  whenOpen(() => send({ t: "create", name, duration: "regular" }));
+  whenOpen(() => send({ t: "create", name, duration: "regular", difficulty: "standard" }));
 };
 document.getElementById("joinBtn").onclick = join;
 codeIn.addEventListener("keydown", (e) => {
@@ -132,6 +188,7 @@ document.getElementById("readyBtn").onclick = () => {
 };
 document.getElementById("startBtn").onclick = () => send({ t: "start" });
 document.getElementById("durSel").onchange = (e) => send({ t: "duration", key: e.target.value });
+document.getElementById("diffSel").onchange = (e) => send({ t: "difficulty", key: e.target.value });
 document.getElementById("againBtn").onclick = () => {
   if (isHost) send({ t: "again" });
   endPanel.hidden = true;
@@ -139,19 +196,36 @@ document.getElementById("againBtn").onclick = () => {
 };
 
 function onMsg(msg) {
-  if (msg.t === "err") return showErr(msg.m);
+  reconnectAttempts = 0;
+  if (msg.t === "err") {
+    showErr(msg.m);
+    if (awaitingRejoin) {
+      // The room we were trying to slot back into is gone. No point
+      // retrying — send them back to the menu instead of hanging forever.
+      awaitingRejoin = false;
+      clearSession();
+      resetToMenu();
+    }
+    return;
+  }
+  awaitingRejoin = false;
   if (msg.t === "welcome") {
     myId = msg.id;
     isHost = msg.host;
     roomCode = msg.code;
-    menu.hidden = true;
-    lobby.hidden = false;
-    endPanel.hidden = true;
+    saveSession();
+    showErr("");
     document.getElementById("lobbyCode").textContent = msg.code;
     document.getElementById("startBtn").hidden = !isHost;
     document.getElementById("hostControls").hidden = !isHost;
     document.getElementById("metaChip").textContent = `CODE ${msg.code}`;
-    phase = "lobby";
+    if (!msg.resume) {
+      menu.hidden = true;
+      lobby.hidden = false;
+      endPanel.hidden = true;
+      phase = "lobby";
+    }
+    // If resuming, the very next message (lobby/start/end) drives the UI.
   }
   if (msg.t === "lobby") {
     renderLobby(msg);
@@ -164,6 +238,10 @@ function onMsg(msg) {
       phase = "lobby";
       preview = true;
       canvas.style.cursor = "";
+      prevSnap = null;
+      snap = null;
+      clearFlightMeshes();
+      touchControls.hidden = true;
     }
   }
   if (msg.t === "start") {
@@ -192,15 +270,20 @@ function renderLobby(msg) {
   }
   document.getElementById("metaChip").textContent = `CREW ${msg.players.length}/5 · ${msg.code}`;
   document.getElementById("durSel").value = msg.durationKey;
+  if (msg.difficultyKey) document.getElementById("diffSel").value = msg.difficultyKey;
 }
 
 function beginFlight() {
   phase = "fly";
   preview = false;
+  prevSnap = null;
+  snap = null;
+  clearFlightMeshes();
   overlay.style.display = "none";
   hud.hidden = false;
   audio.resume();
-  canvas.requestPointerLock();
+  if (isTouch) touchControls.hidden = false;
+  else canvas.requestPointerLock();
   yaw = Math.PI;
   pitch = 0;
   document.getElementById("chatlog").innerHTML = "";
@@ -209,6 +292,7 @@ function beginFlight() {
 function showEnd(msg) {
   phase = "ended";
   document.exitPointerLock();
+  touchControls.hidden = true;
   hud.hidden = true;
   overlay.style.display = "";
   lobby.hidden = true;
@@ -255,7 +339,7 @@ function escapeHtml(s) {
 canvas.addEventListener("click", () => {
   if (phase === "fly") {
     audio.resume();
-    canvas.requestPointerLock();
+    if (!isTouch) canvas.requestPointerLock();
   }
 });
 document.addEventListener("pointerlockchange", () => {
@@ -302,7 +386,7 @@ document.addEventListener("keyup", (e) => {
 
 function openChat() {
   chatting = true;
-  document.exitPointerLock();
+  if (!isTouch) document.exitPointerLock();
   const form = document.getElementById("chatForm");
   form.hidden = false;
   form.querySelector("input").focus();
@@ -310,7 +394,7 @@ function openChat() {
 function closeChat() {
   chatting = false;
   document.getElementById("chatForm").hidden = true;
-  if (phase === "fly") canvas.requestPointerLock();
+  if (phase === "fly" && !isTouch) canvas.requestPointerLock();
 }
 document.getElementById("chatForm").onsubmit = (e) => {
   e.preventDefault();
@@ -327,17 +411,145 @@ setInterval(() => {
   action = 0;
 }, 50);
 
-function lerpSnap(a, b, t) {
-  if (!a) return b;
-  if (!b) return a;
-  return b;
+// --- Touch controls: virtual stick, drag-to-look, tap-to-act buttons ---
+if (isTouch) {
+  const joyZone = document.getElementById("joyZone");
+  const joyStick = document.getElementById("joyStick");
+  const lookZone = document.getElementById("lookZone");
+  const JOY_RADIUS = 44;
+  let joyPointerId = null;
+  let joyCenter = { x: 0, y: 0 };
+
+  function updateJoy(cx, cy) {
+    const dx = cx - joyCenter.x;
+    const dy = cy - joyCenter.y;
+    const dist = Math.hypot(dx, dy);
+    const clampedDist = Math.min(dist, JOY_RADIUS);
+    const ang = Math.atan2(dy, dx);
+    const nx = Math.cos(ang) * clampedDist;
+    const ny = Math.sin(ang) * clampedDist;
+    joyStick.style.transform = `translate(${nx}px, ${ny}px) translate(-50%, -50%)`;
+    const dead = dist < JOY_RADIUS * 0.22;
+    const edge = JOY_RADIUS * 0.18;
+    keys.f = !dead && dy < -edge;
+    keys.b = !dead && dy > edge;
+    keys.l = !dead && dx < -edge;
+    keys.r = !dead && dx > edge;
+  }
+  function endJoy(e) {
+    if (e.pointerId !== joyPointerId) return;
+    joyPointerId = null;
+    keys.f = keys.b = keys.l = keys.r = false;
+    joyStick.style.transform = "translate(-50%, -50%)";
+  }
+  joyZone.addEventListener("pointerdown", (e) => {
+    if (joyPointerId !== null) return;
+    joyPointerId = e.pointerId;
+    joyZone.setPointerCapture(e.pointerId);
+    const r = joyZone.getBoundingClientRect();
+    joyCenter = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    updateJoy(e.clientX, e.clientY);
+  });
+  joyZone.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== joyPointerId) return;
+    updateJoy(e.clientX, e.clientY);
+  });
+  joyZone.addEventListener("pointerup", endJoy);
+  joyZone.addEventListener("pointercancel", endJoy);
+
+  let lookPointerId = null;
+  let lookLast = { x: 0, y: 0 };
+  lookZone.addEventListener("pointerdown", (e) => {
+    if (lookPointerId !== null) return;
+    lookPointerId = e.pointerId;
+    lookZone.setPointerCapture(e.pointerId);
+    lookLast = { x: e.clientX, y: e.clientY };
+  });
+  lookZone.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== lookPointerId) return;
+    const dx = e.clientX - lookLast.x;
+    const dy = e.clientY - lookLast.y;
+    lookLast = { x: e.clientX, y: e.clientY };
+    yaw -= dx * 0.0044;
+    pitch = Math.max(-1.15, Math.min(1.15, pitch - dy * 0.0044));
+  });
+  function endLook(e) {
+    if (e.pointerId !== lookPointerId) return;
+    lookPointerId = null;
+  }
+  lookZone.addEventListener("pointerup", endLook);
+  lookZone.addEventListener("pointercancel", endLook);
+
+  document.querySelectorAll(".tbtn[data-act]").forEach((btn) => {
+    btn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      audio.resume();
+      action = Number(btn.dataset.act);
+    });
+  });
+  const runBtn = document.getElementById("tRun");
+  runBtn.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    keys.run = true;
+    runBtn.classList.add("on");
+  });
+  runBtn.addEventListener("pointerup", () => {
+    keys.run = false;
+    runBtn.classList.remove("on");
+  });
+  runBtn.addEventListener("pointercancel", () => {
+    keys.run = false;
+    runBtn.classList.remove("on");
+  });
+  document.getElementById("tChat").addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    if (phase === "fly") openChat();
+  });
 }
 
 function findP(list, id) {
   return list.find((p) => p.id === id);
 }
 
-function syncPlayers(s) {
+// --- Snapshot interpolation --------------------------------------------
+// The server is authoritative and only broadcasts a snapshot once per tick
+// (every TICK_MS). The render loop runs much faster than that, so without
+// smoothing every remote entity would visibly snap between positions. We
+// keep the last two snapshots and interpolate between them.
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+function lerpAngle(a, b, t) {
+  let d = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return a + d * t;
+}
+function interpVec(cur, prevList, t) {
+  if (!prevList || t >= 1) return cur;
+  const prev = prevList.find((x) => x.id === cur.id);
+  if (!prev) return cur;
+  return {
+    x: lerp(prev.x, cur.x, t),
+    y: lerp(prev.y ?? 0, cur.y ?? 0, t),
+    z: lerp(prev.z, cur.z, t),
+  };
+}
+function interpCart(cur, prev, t) {
+  if (!prev || t >= 1) return cur;
+  return {
+    x: lerp(prev.x, cur.x, t),
+    z: lerp(prev.z, cur.z, t),
+    yaw: lerpAngle(prev.yaw || 0, cur.yaw || 0, t),
+  };
+}
+function clearFlightMeshes() {
+  for (const m of paxMeshes.values()) scene.remove(m);
+  paxMeshes.clear();
+  for (const m of itemMeshes.values()) scene.remove(m);
+  itemMeshes.clear();
+}
+
+function syncPlayers(s, prev, t) {
   const seen = new Set();
   for (const p of s.players) {
     seen.add(p.id);
@@ -353,13 +565,17 @@ function syncPlayers(s) {
         nametags.set(p.id, tag);
       }
     }
-    m.position.set(p.x, p.y, p.z);
-    m.rotation.y = p.yaw;
+    const pos = interpVec(p, prev?.players, t);
+    m.position.set(pos.x, pos.y, pos.z);
+    let yaw = p.yaw;
+    const prevP = prev?.players.find((x) => x.id === p.id);
+    if (prevP && t < 1) yaw = lerpAngle(prevP.yaw, p.yaw, t);
+    m.rotation.y = yaw;
     if (p.id !== myId) {
       const tag = nametags.get(p.id);
       if (tag) {
         tag.textContent = p.item ? `${p.name} · ${ITEM_DEFS[p.item]?.label || p.item}` : p.name;
-        project(m.position.clone().setY(p.y + 1.55), tag);
+        project(m.position.clone().setY(pos.y + 1.55), tag);
       }
     }
     if (p.emote > 0 && m.userData.head) {
@@ -388,7 +604,7 @@ function project(pos, el) {
   el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -120%)`;
 }
 
-function syncPax(s) {
+function syncPax(s, prev, t) {
   for (const p of s.pax) {
     let m = paxMeshes.get(p.id);
     if (!m) {
@@ -396,7 +612,8 @@ function syncPax(s) {
       scene.add(m);
       paxMeshes.set(p.id, m);
     }
-    m.position.set(p.x, 0, p.z);
+    const pos = interpVec(p, prev?.pax, t);
+    m.position.set(pos.x, 0, pos.z);
     m.rotation.y = p.seat < 2 ? Math.PI / 2 : -Math.PI / 2;
     if (p.state === "stand") m.rotation.y = 0;
     const arm = m.userData.arm;
@@ -409,7 +626,7 @@ function syncPax(s) {
   }
 }
 
-function syncItems(s) {
+function syncItems(s, prev, t) {
   const seen = new Set();
   for (const it of s.items) {
     seen.add(it.id);
@@ -420,7 +637,8 @@ function syncItems(s) {
       scene.add(m);
       itemMeshes.set(it.id, m);
     }
-    m.position.set(it.x, it.y, it.z);
+    const pos = interpVec(it, prev?.items, t);
+    m.position.set(pos.x, pos.y, pos.z);
     m.visible = !it.heldBy || it.heldBy !== myId;
   }
   for (const [id, m] of itemMeshes) {
@@ -564,17 +782,18 @@ function loop(now) {
     camera.position.set(Math.sin(previewT * 0.12) * 0.25, 1.45, z);
     camera.lookAt(0, 1.1, z - 4);
   } else {
+    const t = prevSnap ? Math.min(1, Math.max(0, (now - snapAt) / TICK_MS)) : 1;
     const me = findP(snap.players, myId);
     if (me) {
-      me.yaw = yaw;
-      me.pitch = pitch;
-      cameraFrom(me);
+      const pos = interpVec(me, prevSnap?.players, t);
+      cameraFrom({ ...me, x: pos.x, y: pos.y, z: pos.z, yaw, pitch });
     }
-    cartMesh.position.set(snap.cart.x, 0, snap.cart.z);
-    cartMesh.rotation.y = snap.cart.yaw || 0;
-    syncPlayers(snap);
-    syncPax(snap);
-    syncItems(snap);
+    const cart = interpCart(snap.cart, prevSnap?.cart, t);
+    cartMesh.position.set(cart.x, 0, cart.z);
+    cartMesh.rotation.y = cart.yaw;
+    syncPlayers(snap, prevSnap, t);
+    syncPax(snap, prevSnap, t);
+    syncItems(snap, prevSnap, t);
     syncSpills(snap);
     updateHud(snap);
     audio.setTurbulence(snap.turbulence > 0);

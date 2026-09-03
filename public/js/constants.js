@@ -72,6 +72,15 @@ export const FLIGHT_SECONDS = {
   long: 390,
 };
 
+// eventMul / needMul: multiply the *interval* between director events and
+// passenger need-calls, so lower = more frequent = harder.
+// moodMul: multiplies mood penalties from mistakes, spills, ignored calls, etc.
+export const DIFFICULTY = {
+  calm: { label: "Calm hop", eventMul: 1.35, needMul: 1.25, moodMul: 0.75 },
+  standard: { label: "Standard red-eye", eventMul: 1, needMul: 1, moodMul: 1 },
+  chaos: { label: "Chaos from hell", eventMul: 0.68, needMul: 0.72, moodMul: 1.3 },
+};
+
 export const PAX_FIRST = [
   "Margo", "Len", "Priya", "Doug", "Yasmin", "Chet", "Ines", "Ravi",
   "Pam", "Nico", "Helga", "Omar", "June", "Felix", "Tilda", "Wes",
