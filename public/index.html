@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RED-EYE — Night Owl Air 413</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%231a2740' stroke='%23c9a227' stroke-width='3'/%3E%3Ccircle cx='32' cy='30' r='10' fill='%232ec4b6'/%3E%3Ccircle cx='28' cy='28' r='2' fill='%23070b14'/%3E%3Ccircle cx='36' cy='28' r='2' fill='%23070b14'/%3E%3Cpath d='M12 36 Q32 52 52 36' fill='%232ec4b6'/%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/css/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="view"></canvas>
+      <div id="labels"></div>
+
+      <div id="overlay">
+        <header class="chrome">
+          <div class="crest" aria-hidden="true">
+            <div class="owl"></div>
+          </div>
+          <div>
+            <div class="carrier">NIGHT OWL AIR</div>
+            <div class="flight">FLIGHT 413 · MIDNIGHT CITY → DAWN HARBOR</div>
+          </div>
+          <div class="right-meta" id="metaChip">CREW 0/5</div>
+        </header>
+
+        <section id="menu" class="panel boarding">
+          <p class="kicker">Cabin crew briefing</p>
+          <h1>RED-EYE</h1>
+          <p class="lede">
+            You are the entire cabin crew on a cursed overnight hop. Serve drinks, put out fires,
+            sit the drunk back down, and land before the passengers unionize. Up to five friends.
+            One aisle. No manager.
+          </p>
+          <label class="field">
+            <span>Crew name</span>
+            <input id="nameIn" maxlength="16" placeholder="e.g. Pam" autocomplete="nickname" />
+          </label>
+          <div class="row">
+            <button id="createBtn" class="btn primary">Open a flight</button>
+            <div class="join">
+              <input id="codeIn" maxlength="4" placeholder="CODE" spellcheck="false" />
+              <button id="joinBtn" class="btn">Join</button>
+            </div>
+          </div>
+          <p id="err" class="err" hidden></p>
+          <ul class="howto">
+            <li><kbd>WASD</kbd> move · <kbd>Shift</kbd> run · mouse look</li>
+            <li><kbd>E</kbd> grab / serve / stow · <kbd>F</kbd> throw · <kbd>G</kbd> drop</li>
+            <li><kbd>R</kbd> shove · <kbd>X</kbd> salute · <kbd>Enter</kbd> PA (chat)</li>
+          </ul>
+        </section>
+
+        <section id="lobby" class="panel boarding" hidden>
+          <p class="kicker">Boarding pass</p>
+          <h2>Flight <span id="lobbyCode">----</span></h2>
+          <p class="lede">Share that code. Host starts when the crew looks employed enough.</p>
+          <div id="crewList" class="crew-list"></div>
+          <div class="row" id="hostControls">
+            <label class="field grow">
+              <span>Block time</span>
+              <select id="durSel">
+                <option value="short">Short hop — 3 min</option>
+                <option value="regular" selected>Red-eye — 4.5 min</option>
+                <option value="long">Redeye from hell — 6.5 min</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <button id="readyBtn" class="btn">Ready</button>
+            <button id="startBtn" class="btn primary" hidden>Push back</button>
+          </div>
+        </section>
+
+        <section id="end" class="panel boarding" hidden>
+          <p class="kicker" id="endKicker">Wheels down</p>
+          <h2 id="endTitle">Landed</h2>
+          <p class="lede" id="endReason"></p>
+          <div id="endStats" class="stats"></div>
+          <button id="againBtn" class="btn primary">Another sector</button>
+        </section>
+      </div>
+
+      <div id="hud" hidden>
+        <div class="topbar">
+          <div class="pill" id="clock">00:00</div>
+          <div class="mood">
+            <span>CABIN</span>
+            <div class="bar"><i id="moodFill"></i></div>
+            <b id="moodNum">72</b>
+          </div>
+          <div class="pill warn" id="belt" hidden>SEATBELT</div>
+          <div class="pill fire" id="firePill" hidden>GALLEY FIRE</div>
+        </div>
+        <div id="banner" class="banner" hidden></div>
+        <div id="calls" class="calls"></div>
+        <div class="hotbar">
+          <div class="hands" id="hands">Empty handed</div>
+          <div class="prompt" id="prompt"></div>
+        </div>
+        <div id="chatlog" class="chatlog"></div>
+        <form id="chatForm" class="chatform" hidden>
+          <input id="chatIn" maxlength="80" placeholder="Say it on the jumpseat…" autocomplete="off" />
+        </form>
+        <div class="crosshair"></div>
+      </div>
+    </div>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/vendor/three/build/three.module.js"
+        }
+      }
+    </script>
+    <script type="module" src="/js/client.js"></script>
+  </body>
+</html>

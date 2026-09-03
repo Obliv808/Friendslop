@@ -1,0 +1,16 @@
+{
+  "name": "red-eye",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "RED-EYE — 1–5 player co-op cabin-crew chaos. Land the flight.",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node server/test-sim.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "three": "^0.170.0",
+    "ws": "^8.18.3"
+  }
+}
